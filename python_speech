@@ -1,0 +1,127 @@
+import speech_recognition as sr
+import serial
+import time
+import requests
+from datetime import datetime
+import threading
+
+
+arduino = serial.Serial("COM5" \
+"", 9600)
+time.sleep(2)
+
+
+r = sr.Recognizer()
+mic = sr.Microphone()
+
+
+def get_weather_once():
+    url = (
+        "https://api.open-meteo.com/v1/forecast"
+        "?latitude=41.1340"
+        "&longitude=29.0916"
+        "&current_weather=true"
+        "&timezone=Europe/Istanbul"
+    )
+
+    data = requests.get(url, timeout=5).json()
+    current = data["current_weather"]
+
+    temp = round(current["temperature"])
+    code = current["weathercode"]
+
+    if code == 0:
+        icon = "SUN"
+    elif code in [71, 73, 75, 77, 85, 86]:
+        icon = "SNOW"
+    elif code in [51, 53, 55, 61, 63, 65, 80, 81, 82]:
+        icon = "RAIN"
+    else:
+        icon = "CLOUD"
+
+    return temp, icon
+
+temp, icon = get_weather_once()
+arduino.write(f"TEMP {temp}C\n".encode())
+arduino.write(f"ICON {icon}\n".encode())
+
+
+speed_ms = 600  
+MIN_SPEED = 150  
+MAX_SPEED = 1200 
+
+arduino.write(f"SPEED {speed_ms}\n".encode())
+
+
+def manual_input():
+    global speed_ms
+
+    print("\nCommands:")
+    print("  cloud | rain | snow | sun")
+    print("  +  (faster animation)")
+    print("  -  (slower animation)")
+    print("  wake | sleep\n")
+
+    while True:
+        cmd = input("> ").strip().lower()
+
+        if cmd == "cloud":
+            arduino.write(b"ICON CLOUD\n")
+            print("→ Cloud")
+
+        elif cmd == "rain":
+            arduino.write(b"ICON RAIN\n")
+            print("→ Rain")
+
+        elif cmd == "snow":
+            arduino.write(b"ICON SNOW\n")
+            print("→ Snow")
+
+        elif cmd == "sun":
+            arduino.write(b"ICON SUN\n")
+            print("→ Sun")
+
+        elif cmd == "+":
+            speed_ms = max(MIN_SPEED, speed_ms - 100)
+            arduino.write(f"SPEED {speed_ms}\n".encode())
+            print(f"→ Speed faster ({speed_ms} ms)")
+
+        elif cmd == "-":
+            speed_ms = min(MAX_SPEED, speed_ms + 100)
+            arduino.write(f"SPEED {speed_ms}\n".encode())
+            print(f"→ Speed slower ({speed_ms} ms)")
+
+        elif cmd == "wake":
+            arduino.write(b"WAKE\n")
+            now = datetime.now().strftime("%H:%M")
+            arduino.write(f"TIME {now}\n".encode())
+
+        elif cmd == "sleep":
+            arduino.write(b"SLEEP\n")
+
+
+threading.Thread(target=manual_input, daemon=True).start()
+
+
+print("Listening for voice commands...")
+
+while True:
+    with mic as source:
+        audio = r.listen(source)
+
+    try:
+        text = r.recognize_google(audio).lower()
+        print("Heard:", text)
+
+        if "wake" in text:
+            arduino.write(b"WAKE\n")
+            now = datetime.now().strftime("%H:%M")
+            arduino.write(f"TIME {now}\n".encode())
+
+        elif "sleep" in text:
+            arduino.write(b"SLEEP\n")
+
+    except sr.UnknownValueError:
+        pass
+    except Exception as e:
+        print("Error:", e)
